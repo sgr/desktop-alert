@@ -12,6 +12,6 @@ A Clojure library designed for your application to add desktop alert easily.
 
 # License
 
-Copyright è¢Ì 2013 Shigeru Fujiwara
+Copyright (C) Shigeru Fujiwara All Rights Reserved.
 
 Distributed under the Eclipse Public License, the same as Clojure.
