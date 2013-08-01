@@ -53,7 +53,7 @@
       [i (nth @plats i)]
       [nil nil]))
   (defn- reserve-plat-A
-    "左上から逆方向に走査する"
+    "逆方向に走査する"
     []
     (if-let [i (some #(let [[i plat] %] (if (:used plat) i nil))
                      (reverse (map-indexed vector @plats)))]
@@ -65,7 +65,7 @@
           [nil nil]))
       (reserve-plat-aux 0)))
   (defn- reserve-plat-B
-    "右下から順方向に走査する"
+    "順方向に走査する"
     []
     (let [iplat (some #(let [[i plat] %] (if-not (:used plat) [i plat] nil))
                       (map-indexed vector @plats))]
