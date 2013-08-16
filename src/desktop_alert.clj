@@ -8,7 +8,8 @@
            [java.util.concurrent BlockingQueue Future LinkedBlockingQueue ThreadPoolExecutor TimeUnit]
            [javax.swing JDialog SwingUtilities WindowConstants]))
 
-(def ^{:private true} INTERVAL-DISPLAY 200) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
+(def INTERVAL-DISPLAY 200) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
+(def TERMINATION-TIMEOUT 120) ; スレッドプールのシャットダウン待ちタイムアウト時間(秒)
 
 (defn- abs [n] (when (number? n) (if (neg? n) (* -1 n) n)))
 
@@ -33,25 +34,53 @@
             :lr-bt (fn [[x y]] {:used false :x (+ rx (* (dec x) aw)) :y (+ ry (- rh (* y ah)))}))]
     (vec (map f addrs))))
 
+(defn max-columns
+  "画面上に表示可能な最大列数を返す。
+   dlg-width: ダイアログの幅"
+  [dlg-width]
+  (when (zero? dlg-width) (throw (IllegalArgumentException. "width and height must not be zero")))
+  (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
+        aw (+ 5 dlg-width)]
+    (quot (.width r) aw)))
+
 (defn ^ThreadPoolExecutor interval-executor [max-pool-size ^long interval ^TimeUnit unit ^BlockingQueue queue]
-  (proxy [ThreadPoolExecutor] [1 max-pool-size 5 TimeUnit/SECONDS queue]
+  (proxy [ThreadPoolExecutor] [0 max-pool-size 5 TimeUnit/SECONDS queue]
     (afterExecute
       [r e]
       (proxy-super afterExecute r e)
       (.sleep unit interval))))
 
-(let [plats (atom nil)  ;; アラートダイアログの表示領域
-      queue (LinkedBlockingQueue.)
-      pool  (interval-executor 1 INTERVAL-DISPLAY TimeUnit/MILLISECONDS queue)
+(let [plats (ref nil)  ;; アラートダイアログの表示領域
+      pool  (ref nil)
       timer (Timer. "Alert sweeper" true)
       last-plat-idx (ref nil) ;; 前回使った区画のインデックス
       last-modified (ref (.getTime (Date.)))]
+
+  (defn shutdown-and-wait
+    ([timeout]
+       (when (and @pool (not (.isShutdown @pool)))
+         (.shutdown @pool)
+         (.awaitTermination @pool timeout TimeUnit/SECONDS)))
+    ([]
+       (shutdown-and-wait TERMINATION-TIMEOUT)))
+
   (defn init-alert [dlg-width dlg-height mode column]
-    (reset! plats (divide-plats dlg-width dlg-height mode column)))
+    (when (some zero? [dlg-width dlg-height])
+      (throw (IllegalArgumentException. "width and height must not be zero")))
+    (when (nil? mode) (throw (IllegalArgumentException. "mode must not be nil")))
+    (when (neg? column) (throw (IllegalArgumentException. "column must not be negative")))
+    (shutdown-and-wait)
+    (let [queue (LinkedBlockingQueue.)
+          p (interval-executor 1 INTERVAL-DISPLAY TimeUnit/MILLISECONDS queue)]
+      (dosync
+       (ref-set pool p)
+       (ref-set plats (divide-plats dlg-width dlg-height mode column)))))
+
   (defn- reserve-plat-aux [i]
     (if-not (:used (nth @plats i))
       [i (nth @plats i)]
       [nil nil]))
+
   (defn- reserve-plat-A
     "逆方向に走査する"
     []
@@ -64,14 +93,17 @@
           (reserve-plat-aux i)
           [nil nil]))
       (reserve-plat-aux 0)))
+
   (defn- reserve-plat-B
     "順方向に走査する"
     []
     (let [iplat (some #(let [[i plat] %] (if-not (:used plat) [i plat] nil))
                       (map-indexed vector @plats))]
       (if iplat iplat [nil nil])))
+
   (defn- release-plat [i plat]
-    (swap! plats assoc i (assoc plat :used false)))
+    (dosync (alter plats assoc i (assoc plat :used false))))
+
   (defn- display-alert [^JDialog dlg ^long duration]
     (loop [now (.getTime (Date.))]
       (let [[ai aplat] (reserve-plat-A)
@@ -89,8 +121,8 @@
                       (and (nil? ai) (nil? bi)) [nil nil])]
         (if i
           (do
-            (swap! plats assoc i (assoc plat :used true))
             (dosync
+             (alter plats assoc i (assoc plat :used true))
              (ref-set last-plat-idx i)
              (ref-set last-modified now))
             (SwingUtilities/invokeAndWait
@@ -107,15 +139,16 @@
                                 (.dispatchEvent (WindowEvent. dlg WindowEvent/WINDOW_CLOSING))
                                 (.dispose))
                               (release-plat i plat)))))
-                       (* duration 1000)))
+                       (* duration)))
           (do
             (.sleep TimeUnit/SECONDS 1)
             (recur (.getTime (Date.))))))))
+
   (defn alert
-    "dlg: ダイアログ, duration: 表示時間（秒）"
+    "dlg: ダイアログ, duration: 表示時間（ミリ秒）"
     [^JDialog dlg ^long duration]
     (when-not @plats
       (let [d (.getPreferredSize dlg)]
         (init-alert (.width d) (.height d) :rl-bt 0)))
     (.setDefaultCloseOperation dlg WindowConstants/DISPOSE_ON_CLOSE)
-    (.execute ^ThreadPoolExecutor pool #(display-alert dlg duration))))
+    (.execute ^ThreadPoolExecutor @pool #(display-alert dlg duration))))
