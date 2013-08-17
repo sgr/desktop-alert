@@ -5,7 +5,7 @@
            [java.util.concurrent TimeUnit]
            [javax.swing JDialog JLabel]))
 
-(def DLG-SIZE (Dimension. 220 60))
+(def DLG-SIZE (Dimension. 270 60))
 
 (defn adlg [s size]
   (let [dlg (JDialog.)
@@ -21,11 +21,10 @@
       (.setUndecorated true))))
 
 (defn tiling [num duration mode column]
-  (init-alert (.width DLG-SIZE) (.height DLG-SIZE) mode column)
-  (doseq [n (range 0 num)]
-    (alert (adlg (format "Alert: %d" n) DLG-SIZE) duration))
-  (shutdown-and-wait (* (inc num) (+ INTERVAL-DISPLAY duration)))
-  (.sleep TimeUnit/MILLISECONDS duration))
+  (let [da (DesktopAlerter. (.width DLG-SIZE) (.height DLG-SIZE) mode column)]
+    (doseq [n (range 0 num)]
+      (.alert da (adlg (format "Alert: %d" n) DLG-SIZE) duration))
+    (.shutdownAndWait da)))
 
 (deftest arg-test
   (testing "illegal argument"
