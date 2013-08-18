@@ -87,11 +87,11 @@
 
 (defn- da-init [dlg-width dlg-height mode column]
   (let [queue (LinkedBlockingQueue.)
-        new-pool (interval-executor 1 INTERVAL-DISPLAY TimeUnit/MILLISECONDS queue)
-        new-plats (divide-plats dlg-width dlg-height mode column)]
+        pool (interval-executor 1 INTERVAL-DISPLAY TimeUnit/MILLISECONDS queue)
+        plats (divide-plats dlg-width dlg-height mode column)]
     [[] (atom {:queue queue
-               :pool  new-pool
-               :plats new-plats  ;; アラートダイアログの表示領域
+               :pool  pool
+               :plats plats  ;; アラートダイアログの表示領域
                :last-modified (.getTime (Date.))
                :last-plat-idx nil ;; 前回使った区画のインデックス
                :rest-msec 0})])) ;; 残り時間
@@ -122,7 +122,7 @@
             (swap! da-state assoc :last-plat-idx i :last-modified now)
             (SwingUtilities/invokeAndWait
              #(doto dlg
-                (.setLocation (:x plat) (:y plat))
+                (.setLocation (+ 2 (:x plat)) (+ 2 (:y plat)))
                 (.setVisible true)))
             (.schedule timer
                        (proxy [TimerTask] []
@@ -135,7 +135,7 @@
                                   (.dispatchEvent (WindowEvent. dlg WindowEvent/WINDOW_CLOSING))
                                   (.dispose))
                                 (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
-                                (swap! da-state assoc-in [:plats i] (assoc plat :used false))
+                                (swap! da-state assoc-in [:plats i :used] false)
                                 (catch Exception _))))))
                        duration))
           (do
