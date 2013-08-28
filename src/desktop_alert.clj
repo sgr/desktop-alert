@@ -128,15 +128,15 @@
                        (proxy [TimerTask] []
                          (run []
                            (SwingUtilities/invokeAndWait
-                            (fn []
-                              (try
-                                (doto dlg
-                                  (.setVisible false)
-                                  (.dispatchEvent (WindowEvent. dlg WindowEvent/WINDOW_CLOSING))
-                                  (.dispose))
-                                (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
-                                (swap! da-state assoc-in [:plats i :used] false)
-                                (catch Exception _))))))
+                            #(try
+                               (doto dlg
+                                 (.setVisible false)
+                                 (.dispatchEvent (WindowEvent. dlg WindowEvent/WINDOW_CLOSING)))
+                               (catch Exception _)
+                               (finally (.dispose dlg))))
+                           (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
+                           (swap! da-state assoc-in [:plats i :used] false)
+                           (.purge (:pool @da-state))))
                        duration))
           (do
             (.sleep TimeUnit/SECONDS 1)
