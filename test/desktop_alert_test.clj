@@ -1,33 +1,28 @@
 (ns desktop-alert-test
   (:require [clojure.test :refer :all]
             [desktop-alert :refer :all])
-  (:import [java.awt Dimension]
+  (:import [java.awt Color Dimension]
            [java.util Date Random]
            [java.util.concurrent TimeUnit]
-           [javax.swing JDialog JLabel]))
+           [javax.swing BorderFactory JLabel JPanel]))
 
 (def DLG-SIZE (Dimension. 270 60))
+(def PANEL-SIZE (Dimension. 100 30))
 
-(defn adlg [s size]
-  (let [dlg (JDialog.)
-        label (JLabel. s)]
-    (doto (.getContentPane dlg)
-      (.add label))
-    (doto dlg
-      (.setDefaultCloseOperation JDialog/DISPOSE_ON_CLOSE)
-      (.setFocusableWindowState false)
-      (.setAlwaysOnTop true)
-      (.setPreferredSize size)
-      (.setMinimumSize size)
-      (.setUndecorated true))))
+(defn- apanel [^String s]
+  (doto (JPanel.)
+    (.setMaximumSize PANEL-SIZE)
+    (.setBorder (BorderFactory/createLineBorder Color/YELLOW))
+    (.setBackground Color/BLUE)
+    (.add (doto (JLabel. s) (.setForeground Color/LIGHT_GRAY)))))
 
-(defn tiling [num duration mode column]
+(defn- tiling [num duration mode column]
   (let [da (DesktopAlerter. (.width DLG-SIZE) (.height DLG-SIZE) mode column)]
     (doseq [n (range 0 num)]
-      (.alert da (adlg (format "Alert: %d" n) DLG-SIZE) duration))
+      (.alert da (apanel (format "Alert: %d" n)) duration))
     (.shutdownAndWait da)))
 
-(defn tiling2 [num duration column]
+(defn- tiling2 [num duration column]
   (let [rdm (Random. (.getTime (Date.)))
         th1 (Thread. (fn []
                        (doseq [mode [:rl-tb :lr-tb :rl-bt :lr-bt :rl-tb :lr-tb :rl-bt :lr-bt]]
@@ -37,8 +32,7 @@
                        (doseq [n (range 0 num)]
                          (let [wait-msec (inc (.nextInt rdm 3000))]
                            (.sleep TimeUnit/MILLISECONDS wait-msec)
-                           (alert (adlg (format "Alert: %d,  %.2f" n (float (/ wait-msec 1000))) DLG-SIZE)
-                                  duration)))
+                           (alert (apanel (format "Alert: %d,  %.2f" n (float (/ wait-msec 1000)))) duration)))
                        (.sleep TimeUnit/MILLISECONDS (+ duration INTERVAL-DISPLAY))))]
     (.start th1)
     (.start th2)
@@ -51,11 +45,11 @@
 
 (deftest ^:api arg-test
   (testing "illegal argument"
-    (is (thrown? IllegalArgumentException (init-alert 0 10 :rl-tb 1)))
-    (is (thrown? IllegalArgumentException (init-alert 10 0 :rl-tb 1)))
-    (is (thrown? IllegalArgumentException (init-alert 10 10 nil 1)))
-    (is (thrown? IllegalArgumentException (init-alert 10 10 :rl-tb -1)))
-    (is (thrown? IllegalArgumentException (max-columns 0)))))
+    (is (thrown? AssertionError (init-alert 0 10 :rl-tb 1)))
+    (is (thrown? AssertionError (init-alert 10 0 :rl-tb 1)))
+    (is (thrown? AssertionError (init-alert 10 10 nil 1)))
+    (is (thrown? AssertionError (init-alert 10 10 :rl-tb -1)))
+    (is (thrown? AssertionError (max-columns 0)))))
 
 (deftest ^:rawclass col-test
   (let [duration 1000]
@@ -73,4 +67,5 @@
     (testing "Fill display"
       (tiling (* 20 mcol) 10000 :rl-bt 0)
       (tiling (* 20 mcol) 10000 :lr-tb mcol))))
+ 
 
