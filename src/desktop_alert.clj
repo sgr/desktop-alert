@@ -166,6 +166,9 @@
                              (swap! da-state assoc-in [:plats i :used] false)
                              (.purge (:pool @da-state))
                              (.removeAll dlg)
+                             (try
+                               (.dispose content)
+                               (catch Exception _))
                              (.dispose dlg)
                              (catch Exception _))))
                        duration))
