@@ -2,13 +2,15 @@
 (ns #^{:author "sgr"
        :doc "Alert management functions."}
   desktop-alert
-  (:import [java.awt Dialog Dimension Frame GraphicsEnvironment]
+  (:require [decorator :as deco])
+  (:import [java.awt Dialog Dimension GraphicsEnvironment Shape Window]
            [java.awt.event WindowEvent]
            [java.util Date Timer TimerTask]
            [java.util.concurrent BlockingQueue Future LinkedBlockingQueue ThreadPoolExecutor TimeUnit]
            [javax.swing JComponent SwingUtilities WindowConstants]))
 
-(def INTERVAL-DISPLAY 200) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
+(def INTERVAL-DISPLAY 150) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
+(def DEFAULT-OPACITY (float 0.9))
 
 (defn max-columns
   "画面上に表示可能な最大列数を返す。
@@ -32,11 +34,12 @@
   (if (neg? n) (* -1 n) n))
 
 (defn- divide-plats
-  "dlg-width:  ダイアログの幅
+  "parent: アラートダイアログの親ウィンドウ
+   dlg-width:  ダイアログの幅
    dlg-height: ダイアログの高さ
    mode: アラートモード。←↓(:rl-tb) ←↑(:rl-bt) →↓(:lr-tb) →↑(:lr-bt)
    column: 列数。0が指定された場合は制限なし(画面全体を使って表示する)。"
-  [dlg-width dlg-height mode column]
+  [parent dlg-width dlg-height mode column]
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
         aw (+ 5 dlg-width), ah (+ 5 dlg-height)
         rx (.x r) ry (.y r)
@@ -50,12 +53,11 @@
             :rl-tb (fn [[x y]] {:x (+ rx (- rw (* x aw))) :y (+ ry (* (dec y) ah))})
             :lr-tb (fn [[x y]] {:x (+ rx (* (dec x) aw)) :y (+ ry (* (dec y) ah))})
             :lr-bt (fn [[x y]] {:x (+ rx (* (dec x) aw)) :y (+ ry (- rh (* y ah)))}))
-        frm (Frame.)
         size (Dimension. dlg-width dlg-height)]
     (vec (map #(let [addr (f %)]
                  (assoc addr
                    :used false
-                   :dlg (doto (Dialog. frm)
+                   :dlg (doto (Dialog. parent)
                           (.setFocusableWindowState false)
                           (.setAlwaysOnTop true)
                           (.setPreferredSize size)
@@ -89,20 +91,24 @@
                     (map-indexed vector plats))]
     (if iplat iplat [nil nil])))
 
-(defn- show [dlg]
-  (doto dlg
-    (.setVisible true)))
+(defn- show [dlg opacity shape]
+  (if shape
+    (doto dlg
+      (deco/set-opacity opacity)
+      (deco/set-shape shape)
+      (.setVisible true))
+    (doto dlg
+      (deco/set-opacity opacity)
+      (.setVisible true))))
 
 (defn- hide [dlg]
   (.setVisible dlg false)
-  (.dispatchEvent dlg (WindowEvent. dlg WindowEvent/WINDOW_CLOSING))
-  (.dispose dlg)
-  (.removeAll dlg))
+  (.dispatchEvent dlg (WindowEvent. dlg WindowEvent/WINDOW_CLOSING)))
 
 (gen-class
  :name DesktopAlerter
  :exposes-methods {}
- :constructors {[int int clojure.lang.Keyword int] []}
+ :constructors {[java.awt.Window int int clojure.lang.Keyword int int float java.awt.Shape] []}
  :state state
  :init init
  :methods [[displayAlert [javax.swing.JComponent long] void]
@@ -111,11 +117,14 @@
            [shutdownAndWait [] void]]
  :prefix "da-")
 
-(defn- da-init [dlg-width dlg-height mode column]
+(defn- da-init [parent dlg-width dlg-height mode column interval opacity shape]
   (let [queue (LinkedBlockingQueue.)
-        pool (interval-executor 1 INTERVAL-DISPLAY TimeUnit/MILLISECONDS queue)
-        plats (divide-plats dlg-width dlg-height mode column)]
-    [[] (atom {:queue queue
+        pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
+        plats (divide-plats parent dlg-width dlg-height mode column)]
+    [[] (atom {:parent parent
+               :opacity opacity
+               :shape shape
+               :queue queue
                :pool  pool
                :plats plats  ;; アラートダイアログの表示領域
                :last-modified (.getTime (Date.))
@@ -147,7 +156,7 @@
             (swap! da-state assoc-in [:plats i] (assoc plat :used true))
             (swap! da-state assoc :last-plat-idx i :last-modified now)
             (.add dlg content)
-            (SwingUtilities/invokeAndWait #(show dlg))
+            (SwingUtilities/invokeAndWait #(show dlg (:opacity @da-state) (:shape @da-state)))
             (.schedule timer
                        (proxy [TimerTask] []
                          (run []
@@ -156,6 +165,8 @@
                              (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
                              (swap! da-state assoc-in [:plats i :used] false)
                              (.purge (:pool @da-state))
+                             (.removeAll dlg)
+                             (.dispose dlg)
                              (catch Exception _))))
                        duration))
           (do
@@ -184,13 +195,28 @@
 
 (let [alerter (atom nil)]
 
-  (defn init-alert [dlg-width dlg-height mode column]
-    {:pre [(every? pos? [dlg-width dlg-height])
+  (defn init-alert
+    "initialize alerter.
+
+     parent is a parent window which is an instance of java.awt.Window.
+     dlg-width is a width of alert dialog.
+     dlg-height is a height of alert dialog.
+     mode is able to select with :rl-tb, :lr-tb, :rl-bt and :lr-bt.
+     column is a columns number of displaying alert dialog.
+     interval is an interval for displaying between one alert dialog and another. [msec]
+     opacity is an opacity value of alert dialog. opacity must be a float.
+     shape is a shape of alert dialog which is an instance of java.awt.Shape."
+    [parent dlg-width dlg-height mode column interval opacity shape]
+    {:pre [(not (nil? parent))
+           (every? pos? [dlg-width dlg-height])
            (contains? #{:rl-tb :lr-tb :rl-bt :lr-bt} mode)
-           (pos? column)]}
+           (pos? column)
+           (pos? interval)
+           (and (float? opacity) (< 0 opacity) (<= opacity 1))
+           (or (nil? shape) (instance? Shape shape))]}
 
     (let [old-alerter @alerter]
-      (reset! alerter (DesktopAlerter. dlg-width dlg-height mode column))
+      (reset! alerter (DesktopAlerter. parent dlg-width dlg-height mode column interval opacity shape))
       (when old-alerter (.shutdown old-alerter))))
 
   (defn alert

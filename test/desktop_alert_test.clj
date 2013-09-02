@@ -4,7 +4,7 @@
   (:import [java.awt Color Dimension]
            [java.util Date Random]
            [java.util.concurrent TimeUnit]
-           [javax.swing BorderFactory JLabel JPanel]))
+           [javax.swing BorderFactory JFrame JLabel JPanel]))
 
 (def DLG-SIZE (Dimension. 270 60))
 (def PANEL-SIZE (Dimension. 100 30))
@@ -17,16 +17,18 @@
     (.add (doto (JLabel. s) (.setForeground Color/LIGHT_GRAY)))))
 
 (defn- tiling [num duration mode column]
-  (let [da (DesktopAlerter. (.width DLG-SIZE) (.height DLG-SIZE) mode column)]
+  (let [parent (JFrame.)
+        da (DesktopAlerter. parent (.width DLG-SIZE) (.height DLG-SIZE) mode column 100 (float 0.8) nil)]
     (doseq [n (range 0 num)]
       (.alert da (apanel (format "Alert: %d" n)) duration))
     (.shutdownAndWait da)))
 
 (defn- tiling2 [num duration column]
-  (let [rdm (Random. (.getTime (Date.)))
+  (let [parent (JFrame.)
+        rdm (Random. (.getTime (Date.)))
         th1 (Thread. (fn []
                        (doseq [mode [:rl-tb :lr-tb :rl-bt :lr-bt :rl-tb :lr-tb :rl-bt :lr-bt]]
-                         (init-alert (.width DLG-SIZE) (.height DLG-SIZE) mode column)
+                         (init-alert parent (.width DLG-SIZE) (.height DLG-SIZE) mode column 100 (float 0.9) nil)
                          (.sleep TimeUnit/SECONDS 10))))
         th2 (Thread. (fn []
                        (doseq [n (range 0 num)]
@@ -39,17 +41,25 @@
     (.join th1)
     (.join th2)))
 
+
+
 (deftest ^:api re-init-test
   (testing "re-init"
     (tiling2 64 5000 2)))
 
 (deftest ^:api arg-test
   (testing "illegal argument"
-    (is (thrown? AssertionError (init-alert 0 10 :rl-tb 1)))
-    (is (thrown? AssertionError (init-alert 10 0 :rl-tb 1)))
-    (is (thrown? AssertionError (init-alert 10 10 nil 1)))
-    (is (thrown? AssertionError (init-alert 10 10 :rl-tb -1)))
-    (is (thrown? AssertionError (max-columns 0)))))
+    (let [p (JFrame.)]
+      (is (thrown? AssertionError (init-alert p 0 10 :rl-tb 1 100 (float 0.9) nil)))
+      (is (thrown? AssertionError (init-alert p 10 0 :rl-tb 1 100 (float 0.9) nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 nil 1 100 (float 0.9) nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 :rl-tb -1 100 (float 0.9) nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 :rl-tb 1 0 (float 0.9) nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 :rl-tb 1 100 9 nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 :rl-tb 1 1000 (float 1.1) nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 :rl-tb 1 1000 (float -0.2) nil)))
+      (is (thrown? AssertionError (init-alert p 10 10 :rl-tb 1 1000 (float 0.5) 1)))
+      (is (thrown? AssertionError (max-columns 0))))))
 
 (deftest ^:rawclass col-test
   (let [duration 1000]
@@ -67,5 +77,3 @@
     (testing "Fill display"
       (tiling (* 20 mcol) 10000 :rl-bt 0)
       (tiling (* 20 mcol) 10000 :lr-tb mcol))))
- 
-
