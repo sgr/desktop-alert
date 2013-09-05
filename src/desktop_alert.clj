@@ -3,11 +3,10 @@
        :doc "Alert management functions."}
   desktop-alert
   (:require [decorator :as deco])
-  (:import [java.awt Dialog Dimension GraphicsEnvironment Shape Window]
-           [java.awt.event WindowEvent]
+  (:import [java.awt AWTEvent Component Dialog Dimension EventQueue GraphicsEnvironment Shape Window]
+           [java.awt.event WindowAdapter]
            [java.util Date Timer TimerTask]
-           [java.util.concurrent BlockingQueue Future LinkedBlockingQueue ThreadPoolExecutor TimeUnit]
-           [javax.swing JComponent SwingUtilities WindowConstants]))
+           [java.util.concurrent BlockingQueue Future LinkedBlockingQueue ThreadPoolExecutor TimeUnit]))
 
 (def INTERVAL-DISPLAY 150) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
 (def DEFAULT-OPACITY (float 0.9))
@@ -27,11 +26,28 @@
     (afterExecute
       [r e]
       (proxy-super afterExecute r e)
-      (.sleep unit interval))))
+      (.sleep unit  interval))))
 
 (defn- abs [n]
   {:pre [(number? n)]}
   (if (neg? n) (* -1 n) n))
+
+(defn- create-dialog [parent]
+  (let [dlg (Dialog. parent)]
+    (doto dlg
+      (.addWindowListener
+       (proxy [WindowAdapter] []
+         (windowClosing [_]
+           (if (EventQueue/isDispatchThread)
+             (do (.setVisible dlg false)
+                 (.dispose dlg))
+             (EventQueue/invokeLater
+              #(do (.setVisible dlg false)
+                   (.dispose dlg)))))))
+      (.setFocusableWindowState false)
+      (.setAlwaysOnTop true)
+      (.setResizable false)
+      (.setUndecorated true))))
 
 (defn- divide-plats
   "parent: アラートダイアログの親ウィンドウ
@@ -57,13 +73,9 @@
     (vec (map #(let [addr (f %)]
                  (assoc addr
                    :used false
-                   :dlg (doto (Dialog. parent)
-                          (.setFocusableWindowState false)
-                          (.setAlwaysOnTop true)
+                   :dlg (doto (create-dialog parent)
                           (.setPreferredSize size)
                           (.setMinimumSize size)
-                          (.setResizable false)
-                          (.setUndecorated true)
                           (.setLocation (+ 2 (:x addr)) (+ 2 (:y addr))))))
               idxs))))
 
@@ -102,8 +114,7 @@
       (.setVisible true))))
 
 (defn- hide [dlg]
-  (.setVisible dlg false)
-  (.dispatchEvent dlg (WindowEvent. dlg WindowEvent/WINDOW_CLOSING)))
+  (.setVisible dlg false))
 
 (gen-class
  :name DesktopAlerter
@@ -111,8 +122,8 @@
  :constructors {[java.awt.Window int int clojure.lang.Keyword int int float java.awt.Shape] []}
  :state state
  :init init
- :methods [[displayAlert [javax.swing.JComponent long] void]
-           [alert [javax.swing.JComponent long] void]
+ :methods [[displayAlert [java.awt.Component long] void]
+           [alert [java.awt.Component long] void]
            [shutdown [] void]
            [shutdownAndWait [] void]]
  :prefix "da-")
@@ -132,7 +143,7 @@
                :rest-msec 0})])) ;; 残り時間
 
 (let [timer (Timer. "Alert sweeper" true)]
-  (defn- da-displayAlert [^DesktopAlerter this ^JComponent content ^long duration]
+  (defn- da-displayAlert [^DesktopAlerter this ^Component content ^long duration]
     (loop [now (.getTime (Date.))]
       (let [da-state (.state this)
             plats (:plats @da-state)
@@ -156,12 +167,12 @@
             (swap! da-state assoc-in [:plats i] (assoc plat :used true))
             (swap! da-state assoc :last-plat-idx i :last-modified now)
             (.add dlg content)
-            (SwingUtilities/invokeAndWait #(show dlg (:opacity @da-state) (:shape @da-state)))
+            (EventQueue/invokeAndWait #(show dlg (:opacity @da-state) (:shape @da-state)))
             (.schedule timer
                        (proxy [TimerTask] []
                          (run []
                            (try
-                             (SwingUtilities/invokeAndWait #(hide dlg))
+                             (EventQueue/invokeAndWait #(hide dlg))
                              (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
                              (swap! da-state assoc-in [:plats i :used] false)
                              (.purge (:pool @da-state))
@@ -176,7 +187,7 @@
             (.sleep TimeUnit/SECONDS 1)
             (recur (.getTime (Date.)))))))))
 
-(defn- da-alert [^DesktopAlerter this ^JComponent content ^long duration]
+(defn- da-alert [^DesktopAlerter this ^Component content ^long duration]
   (swap! (.state this) assoc :rest-msec (+ duration (:rest-msec @(.state this))))
   (.execute ^ThreadPoolExecutor (:pool @(.state this))
             #(.displayAlert this content duration)))
@@ -224,6 +235,6 @@
 
   (defn alert
     "dlg: ダイアログ, duration: 表示時間（ミリ秒）"
-    [^JComponent content ^long duration]
+    [^Component content ^long duration]
     {:pre [(pos? duration)]}
     (when @alerter (.alert @alerter content duration))))

@@ -1,7 +1,9 @@
 (ns desktop-alert-test
   (:require [clojure.test :refer :all]
-            [desktop-alert :refer :all])
+            [desktop-alert :refer :all]
+            [clojure.tools.logging :as log])
   (:import [java.awt Color Dimension]
+           [java.awt.event MouseEvent MouseListener WindowEvent]
            [java.util Date Random]
            [java.util.concurrent TimeUnit]
            [javax.swing BorderFactory JFrame JLabel JPanel]))
@@ -15,6 +17,23 @@
     (.setBorder (BorderFactory/createLineBorder Color/YELLOW))
     (.setBackground Color/BLUE)
     (.add (doto (JLabel. s) (.setForeground Color/LIGHT_GRAY)))))
+
+(defn- bpanel [^String s]
+  (let [p (apanel s)]
+    (doto p
+      (.addMouseListener (proxy [MouseListener] []
+                           (mouseClicked [_]
+                             (let [dlg (.getParent p)]
+                               (when (and dlg (instance? java.awt.Window dlg))
+                                 (log/info (format "dlg is Window: %s" (pr-str dlg)))
+                                 (.dispatchEvent dlg (WindowEvent. dlg WindowEvent/WINDOW_CLOSING))
+                                 (.removeMouseListener p this))))
+                           (mouseEntered [_])
+                           (mouseExited [_])
+                           (mousePressed [_])
+                           (mouseReleased [_])))
+      (.setBackground Color/DARK_GRAY))))
+
 
 (defn- tiling [num duration mode column]
   (let [parent (JFrame.)
@@ -34,7 +53,7 @@
                        (doseq [n (range 0 num)]
                          (let [wait-msec (inc (.nextInt rdm 3000))]
                            (.sleep TimeUnit/MILLISECONDS wait-msec)
-                           (alert (apanel (format "Alert: %d,  %.2f" n (float (/ wait-msec 1000)))) duration)))
+                           (alert (bpanel (format "Alert: %d,  %.2f" n (float (/ wait-msec 1000)))) duration)))
                        (.sleep TimeUnit/MILLISECONDS (+ duration INTERVAL-DISPLAY))))]
     (.start th1)
     (.start th2)
