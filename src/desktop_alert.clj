@@ -3,7 +3,7 @@
        :doc "Alert management functions."}
   desktop-alert
   (:require [decorator :as deco])
-  (:import [java.awt AWTEvent Component Dialog Dimension EventQueue GraphicsEnvironment Shape Window]
+  (:import [java.awt AWTEvent Component Dialog Dialog$ModalityType Dimension EventQueue GraphicsEnvironment Shape Window]
            [java.awt.event WindowAdapter]
            [java.util Date Timer TimerTask]
            [java.util.concurrent BlockingQueue Future LinkedBlockingQueue ThreadPoolExecutor TimeUnit]))
@@ -45,6 +45,7 @@
               #(do (.setVisible dlg false)
                    (.dispose dlg)))))))
       (.setFocusableWindowState false)
+      (.setModalityType Dialog$ModalityType/MODELESS)
       (.setAlwaysOnTop true)
       (.setResizable false)
       (.setUndecorated true))))
