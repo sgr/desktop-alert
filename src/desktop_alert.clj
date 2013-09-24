@@ -2,7 +2,8 @@
 (ns #^{:author "sgr"
        :doc "Alert management functions."}
   desktop-alert
-  (:require [decorator :as deco])
+  (:require [clojure.tools.logging :as log]
+            [decorator :as deco])
   (:import [java.awt AWTEvent Component Dialog Dialog$ModalityType Dimension EventQueue GraphicsEnvironment Shape Window]
            [java.awt.event WindowAdapter]
            [java.util Date Timer TimerTask]
@@ -56,7 +57,7 @@
    dlg-height: ダイアログの高さ
    mode: アラートモード。←↓(:rl-tb) ←↑(:rl-bt) →↓(:lr-tb) →↑(:lr-bt)
    column: 列数。0が指定された場合は制限なし(画面全体を使って表示する)。"
-  [parent dlg-width dlg-height mode column]
+  [parent dlg-width dlg-height mode column opacity shape]
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
         aw (+ 5 dlg-width), ah (+ 5 dlg-height)
         rx (.x r) ry (.y r)
@@ -75,6 +76,8 @@
                  (assoc addr
                    :used false
                    :dlg (doto (create-dialog parent)
+                          (deco/set-opacity opacity)
+                          (fn [dlg] (when shape (deco/set-shape dlg shape)))
                           (.setPreferredSize size)
                           (.setMinimumSize size)
                           (.setLocation (+ 2 (:x addr)) (+ 2 (:y addr))))))
@@ -104,19 +107,6 @@
                     (map-indexed vector plats))]
     (if iplat iplat [nil nil])))
 
-(defn- show [dlg opacity shape]
-  (if shape
-    (doto dlg
-      (deco/set-opacity opacity)
-      (deco/set-shape shape)
-      (.setVisible true))
-    (doto dlg
-      (deco/set-opacity opacity)
-      (.setVisible true))))
-
-(defn- hide [dlg]
-  (.setVisible dlg false))
-
 (gen-class
  :name DesktopAlerter
  :exposes-methods {}
@@ -132,10 +122,8 @@
 (defn- da-init [parent dlg-width dlg-height mode column interval opacity shape]
   (let [queue (LinkedBlockingQueue.)
         pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
-        plats (divide-plats parent dlg-width dlg-height mode column)]
+        plats (divide-plats parent dlg-width dlg-height mode column opacity shape)]
     [[] (atom {:parent parent
-               :opacity opacity
-               :shape shape
                :queue queue
                :pool  pool
                :plats plats  ;; アラートダイアログの表示領域
@@ -168,12 +156,12 @@
             (swap! da-state assoc-in [:plats i] (assoc plat :used true))
             (swap! da-state assoc :last-plat-idx i :last-modified now)
             (.add dlg content)
-            (EventQueue/invokeAndWait #(show dlg (:opacity @da-state) (:shape @da-state)))
+            (EventQueue/invokeAndWait #(.setVisible dlg true))
             (.schedule timer
                        (proxy [TimerTask] []
                          (run []
                            (try
-                             (EventQueue/invokeAndWait #(hide dlg))
+                             (EventQueue/invokeAndWait #(.setVisible dlg false))
                              (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
                              (swap! da-state assoc-in [:plats i :used] false)
                              (.purge (:pool @da-state))
@@ -196,7 +184,12 @@
 (defn- da-shutdown [^DesktopAlerter this]
   (let [pool (:pool @(.state this))]
     (when (and pool (not (.isShutdown pool)))
-      (.shutdown pool))))
+      (try
+        (log/info "DesktopAlerter shutting down immediately...")
+        (.shutdownNow pool)
+        (log/info "DesktopAlerter has been shut down")
+        (catch Exception e
+          (log/warn e "Caught an exception while shutting down DesktopAlerter"))))))
 
 (defn- da-shutdownAndWait [^DesktopAlerter this]
   (let [pool (:pool @(.state this))]
