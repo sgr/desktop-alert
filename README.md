@@ -8,7 +8,7 @@ A Clojure library designed for your application to add desktop alert easily.
 logutil is available in [Clojars.org](https://clojars.org/desktop-alert).
 Your leiningen project.clj:
 
-   [desktop-alert "0.3.4"]
+   [desktop-alert "0.3.5"]
 
 ## Usage
 
