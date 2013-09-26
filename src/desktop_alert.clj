@@ -24,10 +24,14 @@
 
 (defn ^ThreadPoolExecutor interval-executor [max-pool-size ^long interval ^TimeUnit unit ^BlockingQueue queue]
   (proxy [ThreadPoolExecutor] [0 max-pool-size 5 TimeUnit/SECONDS queue]
-    (afterExecute
-      [r e]
-      (proxy-super afterExecute r e)
-      (.sleep unit  interval))))
+    (afterExecute [r e]
+      (try
+        (when e
+          (log/warn e "failed execution."))
+        (proxy-super afterExecute r e)
+        (.sleep unit interval)
+        (catch InterruptedException ex
+          (log/warn ex "Interrputed."))))))
 
 (defn- abs [n]
   {:pre [(number? n)]}
@@ -133,52 +137,51 @@
 
 (let [timer (Timer. "Alert sweeper" true)]
   (defn- da-displayAlert [^DesktopAlerter this ^Component content ^long duration]
-    (try
-      (loop [now (.getTime (Date.))]
-        (let [da-state (.state this)
-              plats (:plats @da-state)
-              last-plat-idx (:last-plat-idx @da-state)
-              last-modified (:last-modified @da-state)
-              [ai aplat] (reserve-plat-A plats)
-              [bi bplat] (reserve-plat-B plats)
-              ;; どちらから走査した区画を採用するか以下で決定している。
-              [i plat] (cond
-                        (and ai bi) (cond
-                                     (= ai bi) [ai aplat]
-                                     (> 2000 (- now last-modified)) (if (< (abs (- ai last-plat-idx))
-                                                                           (abs (- bi last-plat-idx)))
-                                                                      [ai aplat] [bi bplat])
-                                     :else (if (> 5 (abs (- ai bi))) [ai aplat] [bi bplat]))
-                        (and ai (nil? bi)) [ai aplat]
-                        (and (nil? ai) bi) [bi bplat]
-                        (and (nil? ai) (nil? bi)) [nil nil])]
-          (if i
-            (let [dlg (:dlg (nth plats i))]
+    (loop [now (.getTime (Date.))]
+      (let [da-state (.state this)
+            plats (:plats @da-state)
+            last-plat-idx (:last-plat-idx @da-state)
+            last-modified (:last-modified @da-state)
+            [ai aplat] (reserve-plat-A plats)
+            [bi bplat] (reserve-plat-B plats)
+            ;; どちらから走査した区画を採用するか以下で決定している。
+            [i plat] (cond
+                      (and ai bi) (cond
+                                   (= ai bi) [ai aplat]
+                                   (> 2000 (- now last-modified)) (if (< (abs (- ai last-plat-idx))
+                                                                         (abs (- bi last-plat-idx)))
+                                                                    [ai aplat] [bi bplat])
+                                   :else (if (> 5 (abs (- ai bi))) [ai aplat] [bi bplat]))
+                      (and ai (nil? bi)) [ai aplat]
+                      (and (nil? ai) bi) [bi bplat]
+                      (and (nil? ai) (nil? bi)) [nil nil])
+            sweep (fn [dlg]
+                    (EventQueue/invokeAndWait #(.setVisible dlg false))
+                    (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
+                    (swap! da-state assoc-in [:plats i :used] false)
+                    (.purge (:pool @da-state))
+                    (.removeAll dlg)
+                    (try
+                      (.dispose content)
+                      (catch Exception _))
+                    (.dispose dlg))]
+        (if i
+          (let [dlg (:dlg (nth plats i))]
+            (try
               (.add dlg content)
               (swap! da-state assoc-in [:plats i] (assoc plat :used true))
               (swap! da-state assoc :last-plat-idx i :last-modified now)
               (EventQueue/invokeAndWait #(.setVisible dlg true))
               (.schedule timer
                          (proxy [TimerTask] []
-                           (run []
-                             (try
-                               (EventQueue/invokeAndWait #(.setVisible dlg false))
-                               (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
-                               (swap! da-state assoc-in [:plats i :used] false)
-                               (.purge (:pool @da-state))
-                               (.removeAll dlg)
-                               (try
-                                 (.dispose content)
-                                 (catch Exception _))
-                               (.dispose dlg)
-                               (catch Exception _))))
-                         duration))
-            (do
-              (.sleep TimeUnit/SECONDS 1)
-              (recur (.getTime (Date.)))))))
-      (catch Exception e
-        (log/warn e "failed alert")))))
-
+                           (run [] (sweep dlg)))
+                         duration)
+              (catch InterruptedException e
+                (log/warn e "Interrputed. Sweep dlg immediately!")
+                (sweep dlg))))
+          (do
+            (.sleep TimeUnit/SECONDS 1)
+            (recur (.getTime (Date.)))))))))
 
 (defn- da-alert [^DesktopAlerter this ^Component content ^long duration]
   (swap! (.state this) assoc :rest-msec (+ duration (:rest-msec @(.state this))))
@@ -188,12 +191,8 @@
 (defn- da-shutdown [^DesktopAlerter this]
   (let [pool (:pool @(.state this))]
     (when (and pool (not (.isShutdown pool)))
-      (try
-        (log/info "DesktopAlerter shutting down immediately...")
-        (.shutdownNow pool)
-        (log/info "DesktopAlerter has been shut down")
-        (catch Exception e
-          (log/warn e "Caught an exception while shutting down DesktopAlerter"))))))
+      (log/info "DesktopAlerter shutting down immediately...")
+      (.shutdownNow pool))))
 
 (defn- da-shutdownAndWait [^DesktopAlerter this]
   (let [pool (:pool @(.state this))]

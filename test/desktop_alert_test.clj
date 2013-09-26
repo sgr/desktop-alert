@@ -35,12 +35,16 @@
       (.setBackground Color/DARK_GRAY))))
 
 
-(defn- tiling [num duration mode column]
+(defn- tiling [num duration mode column wait]
   (let [parent (JFrame.)
         da (DesktopAlerter. parent (.width DLG-SIZE) (.height DLG-SIZE) mode column 100 (float 0.8) nil)]
     (doseq [n (range 0 num)]
       (.alert da (apanel (format "Alert: %d" n)) duration))
-    (.shutdownAndWait da)))
+    (if wait
+      (.shutdownAndWait da)
+      (do
+        (.sleep TimeUnit/SECONDS 5)
+        (.shutdown da)))))
 
 (defn- tiling2 [num duration column]
   (let [parent (JFrame.)
@@ -83,16 +87,25 @@
 (deftest ^:rawclass col-test
   (let [duration 1000]
     (testing "Tiling rl-bt"
-      (tiling 54 duration :rl-bt 2))
+      (tiling 54 duration :rl-bt 2 true))
     (testing "Tiling rl-tb"
-      (tiling 64 duration :rl-tb 2))
+      (tiling 64 duration :rl-tb 2 true))
     (testing "Tiling lr-tb"
-      (tiling 64 duration :lr-tb 2))
+      (tiling 64 duration :lr-tb 2 true))
     (testing "Tiling lr-bt"
-      (tiling 64 duration :lr-bt 2))))
+      (tiling 64 duration :lr-bt 2 true))))
 
 (deftest ^:rawclass fill-test
   (let [mcol (max-columns (.width DLG-SIZE))]
     (testing "Fill display"
-      (tiling (* 20 mcol) 10000 :rl-bt 0)
-      (tiling (* 20 mcol) 10000 :lr-tb mcol))))
+      (tiling (* 20 mcol) 10000 :rl-bt 0 true)
+      (tiling (* 20 mcol) 10000 :lr-tb mcol true))))
+
+(deftest ^:rawclass interruption-test
+  (let [mcol (max-columns (.width DLG-SIZE))]
+    (testing "Interruption"
+      (tiling 60 4000 :rl-bt 0 false)
+      (tiling 60 4000 :lr-bt 0 false)
+      (tiling 60 4000 :rl-tb 0 false)
+      (tiling 60 4000 :lr-tb 0 false)
+      (tiling (* 20 mcol) 10000 :lr-tb mcol true))))
