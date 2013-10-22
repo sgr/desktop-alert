@@ -7,10 +7,14 @@
   (:import [java.awt AWTEvent Component Dialog Dialog$ModalityType Dimension EventQueue GraphicsEnvironment Shape Window]
            [java.awt.event WindowAdapter]
            [java.util Date Timer TimerTask]
-           [java.util.concurrent BlockingQueue Future LinkedBlockingQueue ThreadPoolExecutor TimeUnit]))
+           [java.util.concurrent BlockingQueue Future ArrayBlockingQueue LinkedBlockingQueue
+            ThreadPoolExecutor ThreadPoolExecutor$DiscardPolicy TimeUnit]))
 
-(def INTERVAL-DISPLAY 150) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
+(def KEEP-ALIVE-TIME-SEC 10)
 (def DEFAULT-OPACITY (float 0.9))
+(def DLG-MARGIN 5)
+
+(def ^{:private true} INTERVAL-DISPLAY 150) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
 
 (defn max-columns
   "画面上に表示可能な最大列数を返す。
@@ -19,19 +23,52 @@
   {:pre [(pos? dlg-width)]}
 
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
-        aw (+ 5 dlg-width)]
+        aw (+ DLG-MARGIN dlg-width)]
     (quot (.width r) aw)))
 
+(defn max-rows
+  "画面上に表示可能な最大行数を返す。
+   dlg-height: ダイアログの高さ"
+  [dlg-height]
+  {:pre [(pos? dlg-height)]}
+
+  (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
+        ah (+ DLG-MARGIN dlg-height)]
+    (quot (.height r) ah)))
+
+(defn max-plats
+  "画面上に表示可能なダイアログの表示区画数を返す。
+   dlg-width: ダイアログの幅
+   dlg-height: ダイアログの高さ"
+  [dlg-width dlg-height]
+  {:pre [(pos? dlg-width)
+         (pos? dlg-height)]}
+
+  (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
+        aw (+ DLG-MARGIN dlg-width)
+        ah (+ DLG-MARGIN dlg-height)]
+    (* (quot (.width r) aw) (quot (.height r) ah))))
+
 (defn ^ThreadPoolExecutor interval-executor [max-pool-size ^long interval ^TimeUnit unit ^BlockingQueue queue]
-  (proxy [ThreadPoolExecutor] [0 max-pool-size 5 TimeUnit/SECONDS queue]
-    (afterExecute [r e]
-      (try
-        (when e
-          (log/warn e "failed execution."))
-        (proxy-super afterExecute r e)
-        (.sleep unit interval)
-        (catch InterruptedException ex
-          (log/warn ex "Interrputed."))))))
+  (if (instance? ArrayBlockingQueue queue)
+    (proxy [ThreadPoolExecutor] [0 max-pool-size KEEP-ALIVE-TIME-SEC TimeUnit/SECONDS queue (ThreadPoolExecutor$DiscardPolicy.)]
+      (afterExecute [r e]
+        (try
+          (when e
+            (log/warn e "failed execution."))
+          (proxy-super afterExecute r e)
+          (.sleep unit interval)
+          (catch InterruptedException ex
+            (log/warn ex "Interrputed.")))))
+    (proxy [ThreadPoolExecutor] [0 max-pool-size KEEP-ALIVE-TIME-SEC TimeUnit/SECONDS queue]
+      (afterExecute [r e]
+        (try
+          (when e
+            (log/warn e "failed execution."))
+          (proxy-super afterExecute r e)
+          (.sleep unit interval)
+          (catch InterruptedException ex
+            (log/warn ex "Interrputed.")))))))
 
 (defn- abs [n]
   {:pre [(number? n)]}
@@ -63,7 +100,7 @@
    column: 列数。0が指定された場合は制限なし(画面全体を使って表示する)。"
   [parent dlg-width dlg-height mode column opacity shape]
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
-        aw (+ 5 dlg-width), ah (+ 5 dlg-height)
+        aw (+ DLG-MARGIN dlg-width), ah (+ DLG-MARGIN dlg-height)
         rx (.x r) ry (.y r)
         rw (.width r), w (quot rw aw)
         rh (.height r), h (quot rh ah)
@@ -114,7 +151,8 @@
 (gen-class
  :name DesktopAlerter
  :exposes-methods {}
- :constructors {[java.awt.Window int int clojure.lang.Keyword int int float java.awt.Shape] []}
+ :constructors {[java.awt.Window int int int clojure.lang.Keyword int int float java.awt.Shape] []
+                [java.awt.Window int int clojure.lang.Keyword int int float java.awt.Shape] []}
  :state state
  :init init
  :methods [[displayAlert [java.awt.Component long] void]
@@ -123,17 +161,26 @@
            [shutdownAndWait [] void]]
  :prefix "da-")
 
-(defn- da-init [parent dlg-width dlg-height mode column interval opacity shape]
-  (let [queue (LinkedBlockingQueue.)
-        pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
-        plats (divide-plats parent dlg-width dlg-height mode column opacity shape)]
-    [[] (atom {:parent parent
-               :queue queue
-               :pool  pool
-               :plats plats  ;; アラートダイアログの表示領域
-               :last-modified (.getTime (Date.))
-               :last-plat-idx nil ;; 前回使った区画のインデックス
-               :rest-msec 0})])) ;; 残り時間
+(letfn [(initial-state [parent queue interval pool plats]
+          {:parent parent
+           :queue queue
+           :interval interval
+           :pool  pool
+           :plats plats  ;; アラートダイアログの表示領域
+           :last-modified (.getTime (Date.))
+           :last-plat-idx nil ;; 前回使った区画のインデックス
+           :rest-msec 0})]    ;; 残り時間
+  (defn- da-init
+    ([parent capacity dlg-width dlg-height mode column interval opacity shape]
+       (let [queue (ArrayBlockingQueue. capacity)
+             pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
+             plats (divide-plats parent dlg-width dlg-height mode column opacity shape)]
+         [[] (atom (initial-state parent queue interval pool plats))]))
+    ([parent dlg-width dlg-height mode column interval opacity shape]
+       (let [queue (LinkedBlockingQueue.)
+             pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
+             plats (divide-plats parent dlg-width dlg-height mode column opacity shape)]
+         [[] (atom (initial-state parent queue interval pool plats))]))))
 
 (let [timer (Timer. "Alert sweeper" true)]
   (defn- da-displayAlert [^DesktopAlerter this ^Component content ^long duration]
@@ -195,11 +242,13 @@
       (.shutdownNow pool))))
 
 (defn- da-shutdownAndWait [^DesktopAlerter this]
-  (let [pool (:pool @(.state this))]
+  (let [pool (:pool @(.state this))
+        interval (:interval @(.state this))
+        queue (:queue @(.state this))]
     (when (and pool (not (.isShutdown pool)))
       (.shutdown pool)
       (.awaitTermination pool
-                         (+ (* INTERVAL-DISPLAY (count (:queue @(.state this))))
+                         (+ (* interval (count queue))
                             (* 2 (:rest-msec @(.state this))))
                          TimeUnit/MILLISECONDS))))
 
@@ -217,18 +266,31 @@
      interval is an interval for displaying between one alert dialog and another. [msec]
      opacity is an opacity value of alert dialog. opacity must be a float.
      shape is a shape of alert dialog which is an instance of java.awt.Shape."
-    [parent dlg-width dlg-height mode column interval opacity shape]
-    {:pre [(not (nil? parent))
-           (every? pos? [dlg-width dlg-height])
-           (contains? #{:rl-tb :lr-tb :rl-bt :lr-bt} mode)
-           (pos? column)
-           (pos? interval)
-           (and (float? opacity) (< 0 opacity) (<= opacity 1))
-           (or (nil? shape) (instance? Shape shape))]}
+    ([parent capacity dlg-width dlg-height mode column interval opacity shape]
+       {:pre [(not (nil? parent))
+              (pos? capacity)
+              (every? pos? [dlg-width dlg-height])
+              (contains? #{:rl-tb :lr-tb :rl-bt :lr-bt} mode)
+              (pos? column)
+              (pos? interval)
+              (and (float? opacity) (< 0 opacity) (<= opacity 1))
+              (or (nil? shape) (instance? Shape shape))]}
 
-    (let [old-alerter @alerter]
-      (reset! alerter (DesktopAlerter. parent dlg-width dlg-height mode column interval opacity shape))
-      (when old-alerter (.shutdown old-alerter))))
+       (let [old-alerter @alerter]
+         (reset! alerter (DesktopAlerter. parent capacity dlg-width dlg-height mode column interval opacity shape))
+         (when old-alerter (.shutdown old-alerter))))
+    ([parent dlg-width dlg-height mode column interval opacity shape] ;; キューは可変長だがヒープを尽くす可能性あり
+       {:pre [(not (nil? parent))
+              (every? pos? [dlg-width dlg-height])
+              (contains? #{:rl-tb :lr-tb :rl-bt :lr-bt} mode)
+              (pos? column)
+              (pos? interval)
+              (and (float? opacity) (< 0 opacity) (<= opacity 1))
+              (or (nil? shape) (instance? Shape shape))]}
+
+       (let [old-alerter @alerter]
+         (reset! alerter (DesktopAlerter. parent dlg-width dlg-height mode column interval opacity shape))
+         (when old-alerter (.shutdown old-alerter)))))
 
   (defn alert
     "dlg: ダイアログ, duration: 表示時間（ミリ秒）"
