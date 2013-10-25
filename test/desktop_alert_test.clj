@@ -75,6 +75,24 @@
         (.sleep TimeUnit/SECONDS 5)
         (.shutdown da)))))
 
+(comment
+(deftest memory-leak-test
+  (testing "memory leak"
+    (let [duration 1000
+          capacity 100
+          interval 100
+          columns  1
+          rows (max-rows (.height DLG-SIZE))
+          mode :rl-bt
+          parent (JFrame.)
+          panels (for [i (range 0 rows)] (apanel (format "Alert(%d)" i)))
+          da (DesktopAlerter. parent capacity (.width DLG-SIZE) (.height DLG-SIZE) mode columns interval (float 0.6) nil)]
+      (loop [n 0]
+        ;;(dotimes [i rows] (.alert da (nth panels i) duration))
+        (doseq [i (range 0 rows)] (.alert da (apanel (format "Alert4: %d - %d" n i)) duration))
+        (.sleep TimeUnit/MILLISECONDS (+ duration (* rows interval)))
+        (recur (inc n)))))) ;; infinite loop
+)
 
 (deftest ^:api re-init-test
   (testing "re-init"
@@ -123,3 +141,4 @@
 (deftest saturation-test
   (testing "saturation"
     (tiling3 1000 1000 :rl-bt 1 true 100)))
+

@@ -210,8 +210,7 @@
                     (.removeAll dlg)
                     (try
                       (.dispose content)
-                      (catch Exception _))
-                    (.dispose dlg))]
+                      (catch Exception _)))]
         (if i
           (let [dlg (:dlg (nth plats i))]
             (try
