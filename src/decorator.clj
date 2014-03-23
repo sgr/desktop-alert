@@ -3,7 +3,7 @@
   decorator
   (:require [clojure.tools.logging :as log])
   (:import [java.awt GraphicsEnvironment Shape Window]
-           [java.awt.geom RoundRectangle2D$Float]))
+           [java.awt.geom RoundRectangle2D$Double]))
 
 (defn- decorate-aux-sun-java6 []
   (try
@@ -17,9 +17,9 @@
           supported-tl  (.booleanValue ^Boolean (.invoke mIsTS nil (to-array [TRANSLUCENT])))
           supported-ptl (.booleanValue ^Boolean (.invoke mIsTS nil (to-array [PERPIXEL_TRANSLUCENT])))
           supported-ptp (.booleanValue ^Boolean (.invoke mIsTS nil (to-array [PERPIXEL_TRANSPARENT])))]
-      (log/info (format "This environment supports TRANSLUCENT: %s" supported-tl))
-      (log/info (format "This environment supports PERPIXCEL_TRANSLUCENT: %s" supported-ptl))
-      (log/info (format "This environment supports PERPIXCEL_TRANSPARENT: %s" supported-ptp))
+      (log/infof "This environment supports TRANSLUCENT: %s" supported-tl)
+      (log/infof "This environment supports PERPIXCEL_TRANSLUCENT: %s" supported-ptl)
+      (log/infof "This environment supports PERPIXCEL_TRANSPARENT: %s" supported-ptp)
       (let [cWindow (Class/forName "java.awt.Window")
             cShape (Class/forName "java.awt.Shape")
             mSetWO (.getMethod cAu "setWindowOpacity" (into-array Class [cWindow Float/TYPE]))
@@ -33,7 +33,7 @@
                         (try
                           (when supported-ptp (.invoke mSetWS nil (to-array [w s])))
                           (catch Exception e
-                            (log/warn e (format "failed invoking method[%s]" (pr-str mSetWS))))))}))
+                            (log/warnf e "failed invoking method[%s]" (pr-str mSetWS)))))}))
     (catch Exception e
       (log/warn e "This platform doesn't support AWTUtilities")
       {:set-opacity nil :set-shape nil})))
@@ -50,11 +50,10 @@
           supported-tl  (.isWindowTranslucencySupported gd TRANSLUCENT)
           supported-ptl (.isWindowTranslucencySupported gd PERPIXEL_TRANSLUCENT)
           supported-ptp (.isWindowTranslucencySupported gd PERPIXEL_TRANSPARENT)]
-      (log/info (format "This environment supports TRANSLUCENT: %s" supported-tl))
-      (log/info (format "This environment supports PERPIXCEL_TRANSLUCENT: %s" supported-ptl))
-      (log/info (format "This environment supports PERPIXCEL_TRANSPARENT: %s" supported-ptp))
+      (log/infof "This environment supports TRANSLUCENT: %s" supported-tl)
+      (log/infof "This environment supports PERPIXCEL_TRANSLUCENT: %s" supported-ptl)
+      (log/infof "This environment supports PERPIXCEL_TRANSPARENT: %s" supported-ptp)
       {:set-opacity (fn [^Window w opacity]
-                      (.setUndecorated w true)
                       (try
                         (when supported-tl  (.setOpacity w opacity))
                         (catch Exception e
@@ -76,6 +75,8 @@
                 "1.6" (do (log/info "use Sun Java SE6 Update 10 API (AWTUtilities)")
                           (reset! decorators (decorate-aux-sun-java6)))
                 "1.7" (do (log/info "use Java 7 API")
+                          (reset! decorators (decorate-aux-java7)))
+                "1.8" (do (log/info "use Java 7 API")
                           (reset! decorators (decorate-aux-java7))))
               (when-not @decorators (reset! decorators
                                             {:set-opacity (fn [w opacity])
@@ -89,5 +90,5 @@
       (when-not @decorators (init-decorator))
       ((:set-shape @decorators) w shape))))
 
-(defn round-rect [^Window w arcw arch]
-  (RoundRectangle2D$Float. 0 0 (.getWidth w) (.getHeight w) arcw arch))
+(defn round-rect [rect arcw arch]
+  (RoundRectangle2D$Double. 0 0 (.getWidth rect) (.getHeight rect) arcw arch))

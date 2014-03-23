@@ -1,106 +1,120 @@
 ;; -*- coding: utf-8-unix -*-
-(ns #^{:author "sgr"
-       :doc "Alert management functions."}
-  desktop-alert
+(ns desktop-alert
   (:require [clojure.tools.logging :as log]
+            [clojure.core.async :as ca]
             [decorator :as deco])
-  (:import [java.awt AWTEvent Component Dialog Dialog$ModalityType Dimension EventQueue GraphicsEnvironment Shape Window]
-           [java.awt.event WindowAdapter]
-           [java.util Date Timer TimerTask]
-           [java.util.concurrent BlockingQueue Future ArrayBlockingQueue LinkedBlockingQueue
-            ThreadPoolExecutor ThreadPoolExecutor$DiscardPolicy TimeUnit]))
+  (:import [java.awt AWTEvent Component Dimension EventQueue GraphicsEnvironment Shape Window]
+           [java.awt.event WindowAdapter WindowEvent]))
 
-(def KEEP-ALIVE-TIME-SEC 10)
 (def DEFAULT-OPACITY (float 0.9))
-(def DLG-MARGIN 5)
-
-(def ^{:private true} INTERVAL-DISPLAY 150) ; アラートウィンドウ表示処理の実行間隔(ミリ秒)
+(def MARGIN 5)
 
 (defn max-columns
-  "画面上に表示可能な最大列数を返す。
-   dlg-width: ダイアログの幅"
-  [dlg-width]
-  {:pre [(pos? dlg-width)]}
+  "Returns max displayable columns in current screen.
+   width is width of the alert."
+  [width]
+  {:pre [(pos? width)]}
 
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
-        aw (+ DLG-MARGIN dlg-width)]
+        aw (+ MARGIN width)]
     (quot (.width r) aw)))
 
 (defn max-rows
-  "画面上に表示可能な最大行数を返す。
-   dlg-height: ダイアログの高さ"
-  [dlg-height]
-  {:pre [(pos? dlg-height)]}
+  "Returns max displayable rows in current screen.
+   height is height of the alert."
+  [height]
+  {:pre [(pos? height)]}
 
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
-        ah (+ DLG-MARGIN dlg-height)]
+        ah (+ MARGIN height)]
     (quot (.height r) ah)))
 
 (defn max-plats
-  "画面上に表示可能なダイアログの表示区画数を返す。
-   dlg-width: ダイアログの幅
-   dlg-height: ダイアログの高さ"
-  [dlg-width dlg-height]
-  {:pre [(pos? dlg-width)
-         (pos? dlg-height)]}
+  "Returns max displayable plats in current screen.
+   width is width of the alert.
+   height is height of the alert."
+  [width height]
+  {:pre [(pos? width)
+         (pos? height)]}
 
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
-        aw (+ DLG-MARGIN dlg-width)
-        ah (+ DLG-MARGIN dlg-height)]
+        aw (+ MARGIN width)
+        ah (+ MARGIN height)]
     (* (quot (.width r) aw) (quot (.height r) ah))))
 
-(defn ^ThreadPoolExecutor interval-executor [max-pool-size ^long interval ^TimeUnit unit ^BlockingQueue queue]
-  (if (instance? ArrayBlockingQueue queue)
-    (proxy [ThreadPoolExecutor] [0 max-pool-size KEEP-ALIVE-TIME-SEC TimeUnit/SECONDS queue (ThreadPoolExecutor$DiscardPolicy.)]
-      (afterExecute [r e]
-        (try
-          (when e
-            (log/warn e "failed execution."))
-          (proxy-super afterExecute r e)
-          (.sleep unit interval)
-          (catch InterruptedException ex
-            (log/warn ex "Interrputed.")))))
-    (proxy [ThreadPoolExecutor] [0 max-pool-size KEEP-ALIVE-TIME-SEC TimeUnit/SECONDS queue]
-      (afterExecute [r e]
-        (try
-          (when e
-            (log/warn e "failed execution."))
-          (proxy-super afterExecute r e)
-          (.sleep unit interval)
-          (catch InterruptedException ex
-            (log/warn ex "Interrputed.")))))))
+(comment
+  (defn- private-field [obj name]
+    (letfn [(field [klazz name]
+              (try
+                (.. klazz (getDeclaredField name))
+                (catch NoSuchFieldException _)))]
+      (loop [ks (concat [(class obj)] (supers (class obj)))]
+        (if (empty? ks)
+          nil
+          (if-let [fld (field (first ks) name)]
+            (doto fld (.setAccessible true))
+            (recur (rest ks)))))))
 
-(defn- abs [n]
-  {:pre [(number? n)]}
-  (if (neg? n) (* -1 n) n))
+  (let [ftgt (atom nil)
+        fpw (atom nil)
+        ftgt-pw (atom nil)
+        fpc (atom nil)
+        ftgt-pc (atom nil)]
+    (defn- evil-window [parent]
+      (proxy [Window] [parent]
+        (dispose []
+          (let [peer (.getPeer this)]
+            (proxy-super dispose)
+            (when peer
+              (when-not @ftgt (reset! ftgt (private-field peer "target")))
+              (when @ftgt
+                (.set @ftgt peer nil))
+              (when-not @fpw (reset! fpw (private-field peer "platformWindow")))
+              (when @fpw
+                (when-let [pw (.get @fpw peer)]
+                  (try (.dispose pw) (catch Exception _))
+                  (when-not @ftgt-pw (reset! ftgt-pw (private-field pw "target")))
+                  (.set @ftgt-pw pw nil)))
+              (when-not @fpc (reset! fpc (private-field peer "platformComponent")))
+              (when @fpc
+                (when-let [pc (.get @fpc peer)]
+                  (try (.dispose pc) (catch Exception _))
+                  (when-not @ftgt-pc (reset! ftgt-pc (private-field pc "target")))
+                  (.set @ftgt-pc pc nil)))
+              ))))))
+  )
 
-(defn- create-dialog [parent]
-  (let [dlg (Dialog. parent)]
-    (doto dlg
+(defn- create-alert [parent size x y opacity shape]
+  ;;(let [alert (evil-window parent)]
+  (let [alert (Window. parent)]
+    (when opacity (deco/set-opacity alert opacity))
+    (when shape (deco/set-shape alert shape))
+    (doto alert
       (.addWindowListener
        (proxy [WindowAdapter] []
          (windowClosing [_]
-           (if (EventQueue/isDispatchThread)
-             (do (.setVisible dlg false)
-                 (.dispose dlg))
-             (EventQueue/invokeLater
-              #(do (.setVisible dlg false)
-                   (.dispose dlg)))))))
+           (.setVisible alert false)
+           (doseq [child (.getComponents alert)]
+             (.remove alert child)
+             (try
+               (.dispose child)
+               (catch Exception _))))
+         ))
+      (.setPreferredSize size)
+      (.setMinimumSize size)
+      (.setLocation x y)
       (.setFocusableWindowState false)
-      (.setModalityType Dialog$ModalityType/MODELESS)
-      (.setAlwaysOnTop true)
-      (.setResizable false)
-      (.setUndecorated true))))
+      (.setAlwaysOnTop true))))
 
 (defn- divide-plats
   "parent: アラートダイアログの親ウィンドウ
-   dlg-width:  ダイアログの幅
-   dlg-height: ダイアログの高さ
+   width:  ダイアログの幅
+   height: ダイアログの高さ
    mode: アラートモード。←↓(:rl-tb) ←↑(:rl-bt) →↓(:lr-tb) →↑(:lr-bt)
    column: 列数。0が指定された場合は制限なし(画面全体を使って表示する)。"
-  [parent dlg-width dlg-height mode column opacity shape]
+  [parent width height mode column opacity shape]
   (let [r (.getMaximumWindowBounds (GraphicsEnvironment/getLocalGraphicsEnvironment))
-        aw (+ DLG-MARGIN dlg-width), ah (+ DLG-MARGIN dlg-height)
+        aw (+ MARGIN width), ah (+ MARGIN height)
         rx (.x r) ry (.y r)
         rw (.width r), w (quot rw aw)
         rh (.height r), h (quot rh ah)
@@ -112,187 +126,144 @@
             :rl-tb (fn [[x y]] {:x (+ rx (- rw (* x aw))) :y (+ ry (* (dec y) ah))})
             :lr-tb (fn [[x y]] {:x (+ rx (* (dec x) aw)) :y (+ ry (* (dec y) ah))})
             :lr-bt (fn [[x y]] {:x (+ rx (* (dec x) aw)) :y (+ ry (- rh (* y ah)))}))
-        size (Dimension. dlg-width dlg-height)]
-    (vec (map #(let [addr (f %)]
+        size (Dimension. width height)]
+    (->> idxs
+         (map #(let [addr (f %)]
                  (assoc addr
-                   :used false
-                   :dlg (doto (create-dialog parent)
-                          (deco/set-opacity opacity)
-                          (fn [dlg] (when shape (deco/set-shape dlg shape)))
-                          (.setPreferredSize size)
-                          (.setMinimumSize size)
-                          (.setLocation (+ 2 (:x addr)) (+ 2 (:y addr))))))
-              idxs))))
+                   :use? nil
+                   :x (+ 2 (:x addr))
+                   :y (+ 2 (:y addr))
+                   :size size
+                   :alert (create-alert parent size (+ 2 (:x addr)) (+ 2 (:y addr)) opacity shape))))
+         vec)))
 
-(defn- reserve-plat-A
-  "platsから空きplatを逆方向に走査する"
-  [plats]
-  (letfn [(reserve-plat-aux [plats i]
-            (if-not (:used (nth plats i))
-              [i (nth plats i)]
-              [nil nil]))]
-    (if-let [i (some #(let [[i plat] %] (if (:used plat) i nil))
-                     (reverse (map-indexed vector plats)))]
-      (if (< i (dec (count plats)))
-        (reserve-plat-aux plats (inc i))
-        (if-let [i (some #(let [[i plat] %] (if-not (:used plat) i nil))
-                         (map-indexed vector plats))]
-          (reserve-plat-aux plats i)
-          [nil nil]))
-      (reserve-plat-aux plats 0))))
+(defn- seek-open-plat-backward [plats]
+  (or (->> (map-indexed vector plats) reverse (filter (fn [[i plat]] (when-not (:use? plat)))) last)
+      [nil nil]))
 
-(defn- reserve-plat-B
-  "platsから空きplatを順方向に走査する"
-  [plats]
-  (let [iplat (some #(let [[i plat] %] (if-not (:used plat) [i plat] nil))
-                    (map-indexed vector plats))]
-    (if iplat iplat [nil nil])))
+(defn- seek-open-plat-forward [plats]
+  (or (->> plats (keep-indexed (fn [i plat] (when-not (:use? plat) [i plat]))) first)
+      [nil nil]))
 
-(gen-class
- :name DesktopAlerter
- :exposes-methods {}
- :constructors {[java.awt.Window int int int clojure.lang.Keyword int int float java.awt.Shape] []
-                [java.awt.Window int int clojure.lang.Keyword int int float java.awt.Shape] []}
- :state state
- :init init
- :methods [[displayAlert [java.awt.Component long] void]
-           [alert [java.awt.Component long] void]
-           [shutdown [] void]
-           [shutdownAndWait [] void]]
- :prefix "da-")
+(defn- abs [n]
+  {:pre [(number? n)]}
+  (if (neg? n) (* -1 n) n))
 
-(letfn [(initial-state [parent queue interval pool plats]
-          {:parent parent
-           :queue queue
-           :interval interval
-           :pool  pool
-           :plats plats  ;; アラートダイアログの表示領域
-           :last-modified (.getTime (Date.))
-           :last-plat-idx nil ;; 前回使った区画のインデックス
-           :rest-msec 0})]    ;; 残り時間
-  (defn- da-init
-    ([parent capacity dlg-width dlg-height mode column interval opacity shape]
-       (let [queue (ArrayBlockingQueue. capacity)
-             pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
-             plats (divide-plats parent dlg-width dlg-height mode column opacity shape)]
-         [[] (atom (initial-state parent queue interval pool plats))]))
-    ([parent dlg-width dlg-height mode column interval opacity shape]
-       (let [queue (LinkedBlockingQueue.)
-             pool (interval-executor 1 interval TimeUnit/MILLISECONDS queue)
-             plats (divide-plats parent dlg-width dlg-height mode column opacity shape)]
-         [[] (atom (initial-state parent queue interval pool plats))]))))
+(defn- open-plat [plats last-plat-idx interval]
+  (let [[ai aplat] (seek-open-plat-backward plats)
+        [bi bplat] (seek-open-plat-forward plats)]
+    ;; どちらの区画を採用するかは最近使用区画や使用時刻で決める
+    (cond
+     (and ai bi) (cond
+                  (= ai bi) [ai aplat]
+                  (> 2000 interval) (if (< (abs (- ai last-plat-idx))
+                                           (abs (- bi last-plat-idx)))
+                                      [ai aplat] [bi bplat])
+                  :else (if (> 5 (abs (- ai bi))) [ai aplat] [bi bplat]))
+     (and ai (nil? bi)) [ai aplat]
+     (and (nil? ai) bi) [bi bplat]
+     (and (nil? ai) (nil? bi)) [nil nil])))
 
-(let [timer (Timer. "Alert sweeper" true)]
-  (defn- da-displayAlert [^DesktopAlerter this ^Component content ^long duration]
-    (loop [now (.getTime (Date.))]
-      (let [da-state (.state this)
-            plats (:plats @da-state)
-            last-plat-idx (:last-plat-idx @da-state)
-            last-modified (:last-modified @da-state)
-            [ai aplat] (reserve-plat-A plats)
-            [bi bplat] (reserve-plat-B plats)
-            ;; どちらから走査した区画を採用するか以下で決定している。
-            [i plat] (cond
-                      (and ai bi) (cond
-                                   (= ai bi) [ai aplat]
-                                   (> 2000 (- now last-modified)) (if (< (abs (- ai last-plat-idx))
-                                                                         (abs (- bi last-plat-idx)))
-                                                                    [ai aplat] [bi bplat])
-                                   :else (if (> 5 (abs (- ai bi))) [ai aplat] [bi bplat]))
-                      (and ai (nil? bi)) [ai aplat]
-                      (and (nil? ai) bi) [bi bplat]
-                      (and (nil? ai) (nil? bi)) [nil nil])
-            sweep (fn [dlg]
-                    (EventQueue/invokeAndWait #(.setVisible dlg false))
-                    (swap! da-state assoc :rest-msec (- (:rest-msec @da-state) duration))
-                    (swap! da-state assoc-in [:plats i :used] false)
-                    (.purge (:pool @da-state))
-                    (.removeAll dlg)
-                    (try
-                      (.dispose content)
-                      (catch Exception _)))]
-        (if i
-          (let [dlg (:dlg (nth plats i))]
-            (try
-              (.add dlg content)
-              (swap! da-state assoc-in [:plats i] (assoc plat :used true))
-              (swap! da-state assoc :last-plat-idx i :last-modified now)
-              (EventQueue/invokeAndWait #(.setVisible dlg true))
-              (.schedule timer
-                         (proxy [TimerTask] []
-                           (run [] (sweep dlg)))
-                         duration)
-              (catch InterruptedException e
-                (log/warn e "Interrputed. Sweep dlg immediately!")
-                (sweep dlg))))
-          (do
-            (.sleep TimeUnit/SECONDS 1)
-            (recur (.getTime (Date.)))))))))
-
-(defn- da-alert [^DesktopAlerter this ^Component content ^long duration]
-  (swap! (.state this) assoc :rest-msec (+ duration (:rest-msec @(.state this))))
-  (.execute ^ThreadPoolExecutor (:pool @(.state this))
-            #(.displayAlert this content duration)))
-
-(defn- da-shutdown [^DesktopAlerter this]
-  (let [pool (:pool @(.state this))]
-    (when (and pool (not (.isShutdown pool)))
-      (log/info "DesktopAlerter shutting down immediately...")
-      (.shutdownNow pool))))
-
-(defn- da-shutdownAndWait [^DesktopAlerter this]
-  (let [pool (:pool @(.state this))
-        interval (:interval @(.state this))
-        queue (:queue @(.state this))]
-    (when (and pool (not (.isShutdown pool)))
-      (.shutdown pool)
-      (.awaitTermination pool
-                         (+ (* interval (count queue))
-                            (* 2 (:rest-msec @(.state this))))
-                         TimeUnit/MILLISECONDS))))
-
-
-(let [alerter (atom nil)]
-
+(let [alert-ch (atom nil)
+      alert-go (atom nil)]
   (defn init-alert
-    "initialize alerter.
+    "Initialize alerter.
+     Returns a vector consists of control channel and alert go-routine, and keep return values as current alerter.
 
-     parent is a parent window which is an instance of java.awt.Window.
-     dlg-width is a width of alert dialog.
-     dlg-height is a height of alert dialog.
-     mode is able to select with :rl-tb, :lr-tb, :rl-bt and :lr-bt.
-     column is a columns number of displaying alert dialog.
-     interval is an interval for displaying between one alert dialog and another. [msec]
-     opacity is an opacity value of alert dialog. opacity must be a float.
-     shape is a shape of alert dialog which is an instance of java.awt.Shape."
-    ([parent capacity dlg-width dlg-height mode column interval opacity shape]
+     parent is a parent window which must be an instance of java.awt.Window.
+     capacity is a size of alert buffer. (OPTIONAL)
+        When alert requests are over capacity, oldest request will be dropped.
+        If it is not specified, alert request is blocked until a plat to display alert is allocated.
+     width is a width of alert.
+     height is a height of alert.
+     mode is orientation to display alert. (:rl-tb, :lr-tb, :rl-bt and :lr-bt)
+     column is a columns number of displaying alert.
+     interval is an interval for displaying between one alert and another. [msec]
+     opacity is an opacity value of alert. opacity must be a float.
+     shape is a shape of alert which must be an instance of java.awt.Shape."
+
+    ([parent width height mode column interval opacity shape]
+       (init-alert parent nil width height mode column interval opacity shape))
+
+    ([parent capacity width height mode column interval opacity shape]
        {:pre [(not (nil? parent))
-              (pos? capacity)
-              (every? pos? [dlg-width dlg-height])
+              (or (nil? capacity) (pos? capacity))
+              (every? pos? [width height])
               (contains? #{:rl-tb :lr-tb :rl-bt :lr-bt} mode)
-              (pos? column)
+              (<= 0 column)
               (pos? interval)
-              (and (float? opacity) (< 0 opacity) (<= opacity 1))
+              (float? opacity) (<= 0 opacity 1)
               (or (nil? shape) (instance? Shape shape))]}
 
-       (let [old-alerter @alerter]
-         (reset! alerter (DesktopAlerter. parent capacity dlg-width dlg-height mode column interval opacity shape))
-         (when old-alerter (.shutdown old-alerter))))
-    ([parent dlg-width dlg-height mode column interval opacity shape] ;; キューは可変長だがヒープを尽くす可能性あり
-       {:pre [(not (nil? parent))
-              (every? pos? [dlg-width dlg-height])
-              (contains? #{:rl-tb :lr-tb :rl-bt :lr-bt} mode)
-              (pos? column)
-              (pos? interval)
-              (and (float? opacity) (< 0 opacity) (<= opacity 1))
-              (or (nil? shape) (instance? Shape shape))]}
+       (let [CLOSE-EVENT (WindowEvent. parent WindowEvent/WINDOW_CLOSING)
+             CLOSING-WAIT 500
+             old-ch @alert-ch
+             cch (if capacity (ca/chan (ca/sliding-buffer capacity)) (ca/chan))
+             ar (ca/go-loop [plats (divide-plats parent width height mode column opacity shape)
+                             last-plat-idx nil ;; 前回使った区画のインデックス
+                             last-alerted (System/currentTimeMillis)]
+                  ;; 空きがあれば受け付ける
+                  (let [elapsed (- (System/currentTimeMillis) last-alerted)
+                        waiting (->> plats (filter :use?) (map :use?))
+                        zch (if (> interval elapsed) (ca/timeout (- interval elapsed)) cch)
+                        [c ch] (ca/alts! (if (empty? (->> plats (remove :use?)))
+                                           waiting
+                                           (conj waiting zch)))]
+                    (if c
+                      (condp = (:cmd c)
+                        :alert (let [{:keys [content duration]} c
+                                     [i plat] (open-plat plats last-plat-idx elapsed)
+                                     alert (:alert plat)
+                                     {:keys [size x y]} plat
+                                     pch (ca/go
+                                           (EventQueue/invokeAndWait
+                                            (fn []
+                                              (.add alert content)
+                                              (.setVisible alert true)))
+                                           (ca/<! (ca/timeout duration))
+                                           (.dispatchEvent alert CLOSE-EVENT)
+                                           (ca/<! (ca/timeout CLOSING-WAIT))
+                                           (.dispose alert)
+                                           (ca/<! (ca/timeout CLOSING-WAIT))
+                                           {:cmd :release :plat-idx i})]
+                                 (recur (assoc-in plats [i :use?] pch) i (System/currentTimeMillis)))
+                        :release (let [i (:plat-idx c)]
+                                   (recur (assoc-in plats [i :use?] nil) last-plat-idx last-alerted)))
+                      (if (not= cch ch)
+                        (recur plats last-plat-idx last-alerted)
+                        (do
+                          (log/trace "Closed alert control channel")
+                          (loop [waiting waiting]
+                            (when-not (empty? waiting)
+                              (log/tracef "-- Waiting alert dialogs (%d) are closed..." (count waiting))
+                              (let [[c ch] (ca/alts! waiting)]
+                                (recur (remove #(= ch %) waiting)))))
+                          (log/tracef "-- Releasing all plats")
+                          (doseq [plat plats]
+                            (.dispose (:alert plat)))
+                          (log/trace "Closing alert has done")
+                          )))))]
 
-       (let [old-alerter @alerter]
-         (reset! alerter (DesktopAlerter. parent dlg-width dlg-height mode column interval opacity shape))
-         (when old-alerter (.shutdown old-alerter)))))
+         (reset! alert-ch cch)
+         (reset! alert-go ar)
+         (when old-ch
+           (log/debugf "Close the old-ch: %s" (pr-str old-ch))
+           (ca/close! old-ch))
+         [cch ar])))
 
   (defn alert
-    "dlg: ダイアログ, duration: 表示時間（ミリ秒）"
+    "Request alert to current alerter.
+     content is a content of alert.
+     duration [msec]"
     [^Component content ^long duration]
     {:pre [(pos? duration)]}
-    (when @alerter (.alert @alerter content duration))))
+    (when @alert-ch
+      (ca/>!! @alert-ch {:cmd :alert :content content :duration duration})))
+
+  (defn close-alert
+    "Close current alerter."
+    []
+    (when @alert-ch
+      (ca/close! @alert-ch))
+    (when @alert-go
+      (ca/<!! @alert-go))))
