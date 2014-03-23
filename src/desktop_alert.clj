@@ -87,7 +87,7 @@
 (defn- create-alert [parent size x y opacity shape]
   ;;(let [alert (evil-window parent)]
   (let [alert (Window. parent)]
-    (when opacity (deco/set-opacity alert opacity))
+    (when opacity (deco/set-opacity alert (float opacity)))
     (when shape (deco/set-shape alert shape))
     (doto alert
       (.addWindowListener

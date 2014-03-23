@@ -28,12 +28,14 @@
                         (try
                           (when supported-tl (.invoke mSetWO nil (to-array [w opacity])))
                           (catch Exception e
-                            (log/warn e (format "failed invoking method[%s]" (pr-str mSetWO))))))
+                            (log/warn e (format "failed invoking method [%s] with %s, %f"
+                                                (pr-str mSetWO) (pr-str w) opacity)))))
          :set-shape (fn [^Window w ^Shape s]
                         (try
                           (when supported-ptp (.invoke mSetWS nil (to-array [w s])))
                           (catch Exception e
-                            (log/warnf e "failed invoking method[%s]" (pr-str mSetWS)))))}))
+                            (log/warnf e "failed invoking method [%s] with %s %s"
+                                       (pr-str mSetWS) (pr-str w) (pr-str s)))))}))
     (catch Exception e
       (log/warn e "This platform doesn't support AWTUtilities")
       {:set-opacity nil :set-shape nil})))
