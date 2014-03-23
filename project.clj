@@ -21,6 +21,6 @@
   :plugins [[codox "[0.6,)"]]
   :codox {:sources ["src"]
           :output-dir "doc"
-          :src-dir-uri "https://github.com/sgr/desktop-alert/blob/master"
+          :src-dir-uri "https://github.com/sgr/desktop-alert/blob/master/"
           :src-linenum-anchor-prefix "L"}
   )

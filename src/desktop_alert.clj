@@ -42,50 +42,7 @@
         ah (+ MARGIN height)]
     (* (quot (.width r) aw) (quot (.height r) ah))))
 
-(comment
-  (defn- private-field [obj name]
-    (letfn [(field [klazz name]
-              (try
-                (.. klazz (getDeclaredField name))
-                (catch NoSuchFieldException _)))]
-      (loop [ks (concat [(class obj)] (supers (class obj)))]
-        (if (empty? ks)
-          nil
-          (if-let [fld (field (first ks) name)]
-            (doto fld (.setAccessible true))
-            (recur (rest ks)))))))
-
-  (let [ftgt (atom nil)
-        fpw (atom nil)
-        ftgt-pw (atom nil)
-        fpc (atom nil)
-        ftgt-pc (atom nil)]
-    (defn- evil-window [parent]
-      (proxy [Window] [parent]
-        (dispose []
-          (let [peer (.getPeer this)]
-            (proxy-super dispose)
-            (when peer
-              (when-not @ftgt (reset! ftgt (private-field peer "target")))
-              (when @ftgt
-                (.set @ftgt peer nil))
-              (when-not @fpw (reset! fpw (private-field peer "platformWindow")))
-              (when @fpw
-                (when-let [pw (.get @fpw peer)]
-                  (try (.dispose pw) (catch Exception _))
-                  (when-not @ftgt-pw (reset! ftgt-pw (private-field pw "target")))
-                  (.set @ftgt-pw pw nil)))
-              (when-not @fpc (reset! fpc (private-field peer "platformComponent")))
-              (when @fpc
-                (when-let [pc (.get @fpc peer)]
-                  (try (.dispose pc) (catch Exception _))
-                  (when-not @ftgt-pc (reset! ftgt-pc (private-field pc "target")))
-                  (.set @ftgt-pc pc nil)))
-              ))))))
-  )
-
 (defn- create-alert [parent size x y opacity shape]
-  ;;(let [alert (evil-window parent)]
   (let [alert (Window. parent)]
     (when opacity (deco/set-opacity alert (float opacity)))
     (when shape (deco/set-shape alert shape))
