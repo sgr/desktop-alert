@@ -5,14 +5,16 @@ A Clojure library designed for your application to add desktop alert easily.
 
 ## Install
 
-logutil is available in [Clojars.org](https://clojars.org/desktop-alert).
+logutil is available in [Clojars.org](https://clojars.org/).
 Your leiningen project.clj:
 
-   [desktop-alert "0.5.1"]
+[![Clojars Project](http://clojars.org/desktop-alert/latest-version.svg)](http://clojars.org/desktop-alert)
 
 ## Usage
 
 Please read [API document](http://sgr.github.io/desktop-alert/).
+
+Old style:
 
 ```clojure
   (def frm (JFrame.))
@@ -27,6 +29,8 @@ Please read [API document](http://sgr.github.io/desktop-alert/).
 
   (close-alert) ;; close alerter.
 ```
+
+New style:
 
 ```clojure
   (require '[clojure.core.async :as ca])
